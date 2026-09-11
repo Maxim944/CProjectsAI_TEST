@@ -17,7 +17,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-client = openai.OpenAI(api_key=os.getenv("OPENAI_API_KEY", "YOUR_API_KEY"))
+# Используем совместимый с OpenAI бесплатный API Groq
+client = openai.OpenAI(
+    base_url="https://api.groq.com/openai/v1",
+    api_key="gsk_ВАШ_КЛЮЧ_GROQ"  # Вставьте сюда ваш ключ gsk_...
+)
 
 # История сообщений для поддержки контекста беседы
 conversation_history: List[Dict[str, str]] = []
@@ -77,7 +81,7 @@ async def run_agent(request: AgentRequest):
         messages.append({"role": "user", "content": request.user_prompt})
 
         response = client.chat.completions.create(
-            model="gpt-4o",
+            model="llama-3.3-70b-versatile",
             messages=messages,
             tools=tools,
             tool_choice="auto"
@@ -105,7 +109,7 @@ async def run_agent(request: AgentRequest):
 
             # Запрашиваем финальный текст у модели после исполнения функции
             final_response = client.chat.completions.create(
-                model="gpt-4o",
+                model="llama-3.3-70b-versatile",
                 messages=messages
             )
             final_text = final_response.choices[0].message.content
