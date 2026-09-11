@@ -17,7 +17,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-client = openai.OpenAI(api_key=os.getenv("OPENAI_API_KEY", "YOUR_API_KEY"))
+# Подключение к Groq API через совместимый клиент OpenAI
+client = openai.OpenAI(
+    base_url="https://api.groq.com/openai/v1",
+    api_key=os.getenv("GROQ_API_KEY", "gsk_ВАШ_КЛЮЧ_GROQ_ЗДЕСЬ")
+)
 
 # История сообщений для поддержки контекста беседы
 conversation_history: List[Dict[str, str]] = []
