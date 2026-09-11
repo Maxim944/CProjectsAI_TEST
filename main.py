@@ -6,9 +6,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import openai
 
-app = FastAPI(title="ATIG AI Core - Local Autonomous Agent")
+app = FastAPI(title="ATIG - Autonomous Agent")
 
-# Настройка CORS для работы веб-интерфейса
+# Разрешаем кросс-доменные запросы (CORS) для подключения с GitHub Pages
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -17,17 +17,16 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Подключение к локальной Ollama через эмуляцию OpenAI API
-client = openai.OpenAI(
-    base_url="http://127.0.0.1:11434/v1",
-    api_key="ollama"  # Фиктивный ключ для локального подключения
-)
+client = openai.OpenAI(api_key=os.getenv("OPENAI_API_KEY", "YOUR_API_KEY"))
 
-# Хранилище долговременной памяти (Long-Term Memory)
+# История сообщений для поддержки контекста беседы
+conversation_history: List[Dict[str, str]] = []
+
 class UserMemory:
     def __init__(self):
         self.profile_data: Dict[str, Any] = {
             "user_id": "usr_001",
+            "name": "Максим",
             "preferences": "Предпочитает краткие отчеты, работает в сферах IT и безопасности",
             "active_tasks": []
         }
@@ -40,7 +39,6 @@ class UserMemory:
 
 memory = UserMemory()
 
-# Инструменты агента (Tool Calling)
 tools = [
     {
         "type": "function",
@@ -66,19 +64,20 @@ class AgentRequest(BaseModel):
 async def run_agent(request: AgentRequest):
     try:
         system_prompt = (
-            "Ты — автономный ИИ-агент (Agentic AI ATIG). Твоя цель — самостоятельно анализировать "
-            "запрос пользователя, использовать память и вызывать необходимые инструменты для выполнения задач.\n"
+            "Ты — автономный ИИ-агент ATIG. Твоя цель — помогать пользователю, "
+            "используя память и вызывая инструменты при необходимости. "
+            "Отвечай естественным текстом, вежливо и по существу.\n"
             f"{memory.get_context()}"
         )
 
-        messages = [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": request.user_prompt}
-        ]
+        messages = [{"role": "system", "content": system_prompt}]
+        
+        # Передаем последние 6 сообщений контекста
+        messages.extend(conversation_history[-6:])
+        messages.append({"role": "user", "content": request.user_prompt})
 
-        # Запрос к локальной Qwen 2.5 Coder через Ollama
         response = client.chat.completions.create(
-            model="qwen2.5-coder:7b",
+            model="gpt-4o",
             messages=messages,
             tools=tools,
             tool_choice="auto"
@@ -88,28 +87,36 @@ async def run_agent(request: AgentRequest):
         tool_calls = response_message.tool_calls
 
         if tool_calls:
+            messages.append(response_message)
             for tool_call in tool_calls:
                 function_name = tool_call.function.name
                 function_args = json.loads(tool_call.function.arguments)
 
                 if function_name == "create_task_action":
-                    memory.update_task(function_args.get("task_title"))
+                    task_title = function_args.get("task_title")
+                    memory.update_task(task_title)
                     
-                    messages.append(response_message)
                     messages.append({
                         "role": "tool",
                         "tool_call_id": tool_call.id,
                         "name": function_name,
-                        "content": json.dumps({"status": "success", "added_task": function_args.get("task_title")})
+                        "content": json.dumps({"status": "success", "message": f"Задача '{task_title}' успешно добавлена."})
                     })
 
+            # Запрашиваем финальный текст у модели после исполнения функции
             final_response = client.chat.completions.create(
-                model="qwen2.5-coder:7b",
+                model="gpt-4o",
                 messages=messages
             )
-            return {"status": "completed", "agent_response": final_response.choices[0].message.content}
+            final_text = final_response.choices[0].message.content
+        else:
+            final_text = response_message.content
 
-        return {"status": "completed", "agent_response": response_message.content}
+        # Запоминаем шаг диалога
+        conversation_history.append({"role": "user", "content": request.user_prompt})
+        conversation_history.append({"role": "assistant", "content": final_text})
+
+        return {"status": "completed", "agent_response": final_text}
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
